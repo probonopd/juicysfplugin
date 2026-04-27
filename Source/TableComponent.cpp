@@ -36,6 +36,14 @@ TableComponent::TableComponent(
     int columnIx = 1;
 
     table.getHeader().addColumn (
+            String("Bank"),
+            columnIx++,
+            40, // column width
+            30, // min width
+            100, // max width
+            TableHeaderComponent::defaultFlags
+    );
+    table.getHeader().addColumn (
             String("#"),
             columnIx++,
             30, // column width
@@ -52,13 +60,16 @@ TableComponent::TableComponent(
             TableHeaderComponent::defaultFlags
     );
 
+    // Bank column hidden until search is active
+    table.getHeader().setColumnVisible(1, false);
+
     table.setWantsKeyboardFocus(false);
 
     ValueTree banks{valueTreeState.state.getChildWithName("banks")};
     loadModelFrom(banks);
 
     // we could now change some initial settings..
-    table.getHeader().setSortColumnId(1, false); // sort ascending by ID column
+    table.getHeader().setSortColumnId(2, false); // sort ascending by # column
     valueTreeState.state.addListener(this);
     valueTreeState.addParameterListener("bank", this);
     valueTreeState.addParameterListener("preset", this);
@@ -81,7 +92,7 @@ void TableComponent::loadModelFrom(ValueTree& banks) {
             ValueTree preset{bank.getChild(presetIx)};
             int presetNum{preset.getProperty("num")};
             String presetName = preset.getProperty("name");
-            TableRow row{presetNum, move(presetName)};
+            TableRow row{bankNum, presetNum, move(presetName)};
             banksToPresets.emplace(bankNum, move(row));
         }
     }
@@ -98,24 +109,32 @@ void TableComponent::parameterChanged(const String& parameterID, float newValue)
 
 void TableComponent::repopulateTable() {
     rows.clear();
-    RangedAudioParameter *param{valueTreeState.getParameter("bank")};
-    jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
-    AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
-    int bank{castParam->get()};
 
-    BanksToPresets::iterator lowerBound{banksToPresets.lower_bound(bank)};
-    BanksToPresets::iterator upperBound{banksToPresets.upper_bound(bank)};
-    
-    // basic syntaxes for a lambda which return's a pair's .second
-    // https://stackoverflow.com/questions/2568194/populate-a-vector-with-all-multimap-values-with-a-given-key
-    // shorter syntax with mem_fn()
-    // https://stackoverflow.com/a/36775400/5257399
-    transform(
-        lowerBound,
-        upperBound,
-        back_inserter(rows),
-        mem_fn(&BanksToPresets::value_type::second)
+    if (searchQuery.isEmpty()) {
+        // Original behaviour: show presets for the current bank only
+        RangedAudioParameter *param{valueTreeState.getParameter("bank")};
+        jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
+        AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
+        int bank{castParam->get()};
+
+        BanksToPresets::iterator lowerBound{banksToPresets.lower_bound(bank)};
+        BanksToPresets::iterator upperBound{banksToPresets.upper_bound(bank)};
+        transform(
+            lowerBound,
+            upperBound,
+            back_inserter(rows),
+            mem_fn(&BanksToPresets::value_type::second)
         );
+    } else {
+        // Search mode: collect all presets whose name contains the query (case-insensitive)
+        String lowerQuery{searchQuery.toLowerCase()};
+        for (auto& entry : banksToPresets) {
+            if (entry.second.name.toLowerCase().contains(lowerQuery)) {
+                rows.push_back(entry.second);
+            }
+        }
+    }
+
     table.deselectAllRows();
     table.updateContent();
     table.getHeader().setSortColumnId(0, true);
@@ -156,7 +175,10 @@ void TableComponent::paintRowBackground (
 }
 
 String TableRow::getStringContents(int columnId) {
-    if (columnId <= 1) {
+    if (columnId == 1) {
+        return String(bank);
+    }
+    if (columnId <= 2) {
         return String(preset);
     }
     return name;
@@ -202,13 +224,18 @@ void TableComponent::sortOrderChanged (
 
 void TableComponent::selectCurrentPreset() {
     table.deselectAllRows();
-    RangedAudioParameter *param{valueTreeState.getParameter("preset")};
-    jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
-    AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
-    int value{castParam->get()};
+    RangedAudioParameter *bankParam{valueTreeState.getParameter("bank")};
+    jassert(dynamic_cast<AudioParameterInt*>(bankParam) != nullptr);
+    AudioParameterInt* castBankParam{dynamic_cast<AudioParameterInt*>(bankParam)};
+    int currentBank{castBankParam->get()};
+
+    RangedAudioParameter *presetParam{valueTreeState.getParameter("preset")};
+    jassert(dynamic_cast<AudioParameterInt*>(presetParam) != nullptr);
+    AudioParameterInt* castPresetParam{dynamic_cast<AudioParameterInt*>(presetParam)};
+    int value{castPresetParam->get()};
 
     for (auto it{rows.begin()}; it != rows.end(); ++it) {
-        if(it->preset == value) {
+        if (it->preset == value && it->bank == currentBank) {
             int index{static_cast<int>(distance(rows.begin(), it))};
             table.selectRow(index);
             break;
@@ -220,6 +247,8 @@ void TableComponent::selectCurrentPreset() {
 // column.
 int TableComponent::getColumnAutoSizeWidth (int columnId) {
     if (columnId == 1)
+        return 40;
+    if (columnId == 2)
         return 30;
 
     
@@ -257,7 +286,12 @@ bool TableComponent::DataSorter::operator ()(
         TableRow second
 ) {
     int result;
-    if (columnByWhichToSort <= 1) {
+    if (columnByWhichToSort == 1) {
+        result = compare(first.bank, second.bank);
+        if (result == 0) {
+            result = compare(first.preset, second.preset);
+        }
+    } else if (columnByWhichToSort == 2) {
         result = compare(first.preset, second.preset);
     } else {
         result = first.name
@@ -276,21 +310,39 @@ void TableComponent::selectedRowsChanged (int row) {
     if (row < 0) {
         return;
     }
-    int newPreset{rows[row].preset};
-    RangedAudioParameter *param{valueTreeState.getParameter("preset")};
-    jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
-    AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
-    *castParam = newPreset;
+    const TableRow& selectedRow{rows[row]};
+
+    // Update bank if it has changed (important in search mode where results span banks)
+    RangedAudioParameter *bankParam{valueTreeState.getParameter("bank")};
+    jassert(dynamic_cast<AudioParameterInt*>(bankParam) != nullptr);
+    AudioParameterInt* castBankParam{dynamic_cast<AudioParameterInt*>(bankParam)};
+    if (castBankParam->get() != selectedRow.bank) {
+        *castBankParam = selectedRow.bank;
+    }
+
+    RangedAudioParameter *presetParam{valueTreeState.getParameter("preset")};
+    jassert(dynamic_cast<AudioParameterInt*>(presetParam) != nullptr);
+    AudioParameterInt* castPresetParam{dynamic_cast<AudioParameterInt*>(presetParam)};
+    *castPresetParam = selectedRow.preset;
 }
 
 bool TableComponent::keyPressed(const KeyPress &key) {
     return table.keyPressed(key);
 }
 
+void TableComponent::setSearchQuery(const String& query) {
+    searchQuery = query;
+    // Show Bank column when searching across all banks, hide it otherwise
+    table.getHeader().setColumnVisible(1, searchQuery.isNotEmpty());
+    repopulateTable();
+}
+
 TableRow::TableRow(
+    int bank,
     int preset,
     String name
 )
-: preset{preset}
+: bank{bank}
+, preset{preset}
 , name{name}
 {}

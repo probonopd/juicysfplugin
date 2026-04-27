@@ -18,6 +18,7 @@ using namespace std;
 class TableRow {
 public:
     TableRow(
+             int bank,
              int preset,
              String name
              );
@@ -25,6 +26,7 @@ private:
     /** 1-indexed */
     String getStringContents(int columnId);
 
+    int bank;
     int preset;
     String name;
     
@@ -70,6 +72,8 @@ public:
 
     bool keyPressed(const KeyPress &key) override;
 
+    void setSearchQuery(const String& query);
+
     virtual void parameterChanged (const String& parameterID, float newValue) override;
 
     virtual void valueTreePropertyChanged (ValueTree& treeWhosePropertyHasChanged,
@@ -92,6 +96,8 @@ private:
 
     TableListBox table;     // the table component itself
     Font font;
+
+    String searchQuery;
 
     typedef multimap<int, TableRow> BanksToPresets;
     BanksToPresets banksToPresets;

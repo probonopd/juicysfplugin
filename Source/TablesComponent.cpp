@@ -17,14 +17,21 @@ TablesComponent::TablesComponent(
 
     presetTable.setWantsKeyboardFocus(false);
 
-    addAndMakeVisible(presetTable);
+    searchBox.setTextToShowWhenEmpty("Search presets\xe2\x80\xa6", juce::Colours::grey);
+    searchBox.setWantsKeyboardFocus(true);
+    searchBox.onTextChange = [this]() {
+        presetTable.setSearchQuery(searchBox.getText());
+    };
 
+    addAndMakeVisible(presetTable);
     addAndMakeVisible(banks);
+    addAndMakeVisible(searchBox);
 }
 
 void TablesComponent::resized() {
     Rectangle<int> r (getLocalBounds());
     banks.setBounds (r.removeFromTop(27).reduced(5,0));
+    searchBox.setBounds (r.removeFromTop(24).reduced(5, 2));
 
     presetTable.setBounds (r);
 }
