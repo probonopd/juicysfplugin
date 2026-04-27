@@ -28,7 +28,7 @@ private:
     AudioProcessorValueTreeState& valueTreeState;
 
     Pills banks;
-    TextEditor searchBox;
+    juce::TextEditor searchBox;
     TableComponent presetTable;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TablesComponent)
