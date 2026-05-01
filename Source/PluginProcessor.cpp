@@ -379,7 +379,7 @@ void JuicySFAudioProcessor::loadPreset(const File& presetFile)
     presetFile.readLines(lines);
 
     String currentSection;
-    StringPairArray paramValues;
+    juce::StringPairArray paramValues;
     String sf2PathRaw;
 
     for (const String& line : lines) {
@@ -402,20 +402,13 @@ void JuicySFAudioProcessor::loadPreset(const File& presetFile)
             paramValues.set(key, value);
     }
 
-    // Restore parameters (actual values → normalized for setValueNotifyingHost)
+    // Restore parameters: parse saved actual value, convert to normalised 0..1
     for (auto* param : getParameters()) {
-        if (auto* p = dynamic_cast<AudioProcessorParameterWithID*>(param)) {
+        if (auto* p = dynamic_cast<RangedAudioParameter*>(param)) {
             if (!paramValues.containsKey(p->paramID))
                 continue;
-            const String valueStr = paramValues[p->paramID];
-            const auto& range = p->getNormalisableRange();
-            if (auto* pi = dynamic_cast<AudioParameterInt*>(p)) {
-                const float actual    = static_cast<float>(valueStr.getIntValue());
-                p->setValueNotifyingHost(range.convertTo0to1(actual));
-            } else if (dynamic_cast<AudioParameterFloat*>(p)) {
-                const float actual = valueStr.getFloatValue();
-                p->setValueNotifyingHost(range.convertTo0to1(actual));
-            }
+            const float actual = paramValues[p->paramID].getFloatValue();
+            p->setValueNotifyingHost(p->getNormalisableRange().convertTo0to1(actual));
         }
     }
 
