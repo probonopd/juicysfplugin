@@ -318,6 +318,105 @@ bool JuicySFAudioProcessor::supportsDoublePrecisionProcessing() const {
     return false;
 }
 
+void JuicySFAudioProcessor::savePreset(const File& presetFile)
+{
+    String ini;
+    ini << "; JuicySF preset\n";
+    ini << "; https://github.com/probonopd/juicysfplugin\n";
+
+    // --- [soundfont] section ---
+    ini << "\n[soundfont]\n";
+    String sf2Path = valueTreeState.state
+                         .getChildWithName("soundFont")
+                         .getProperty("path", "")
+                         .toString();
+    if (sf2Path.isNotEmpty()) {
+        File sf2File(sf2Path);
+        // Prefer a path relative to the preset file so the preset is portable
+        String relPath = sf2File.getRelativePathFrom(presetFile.getParentDirectory());
+        ini << "path=" << relPath << "\n";
+    } else {
+        ini << "path=\n";
+    }
+
+    // --- [params] section ---
+    ini << "\n[params]\n";
+    for (auto* param : getParameters()) {
+        if (auto* p = dynamic_cast<AudioProcessorParameterWithID*>(param)) {
+            if (auto* pi = dynamic_cast<AudioParameterInt*>(p)) {
+                ini << p->paramID << "=" << pi->get() << "\n";
+            } else if (auto* pf = dynamic_cast<AudioParameterFloat*>(p)) {
+                ini << p->paramID << "=" << pf->get() << "\n";
+            }
+        }
+    }
+
+    presetFile.replaceWithText(ini);
+}
+
+void JuicySFAudioProcessor::loadPreset(const File& presetFile)
+{
+    if (!presetFile.existsAsFile())
+        return;
+
+    StringArray lines;
+    presetFile.readLines(lines);
+
+    String currentSection;
+    StringPairArray paramValues;
+    String sf2PathRaw;
+
+    for (const String& line : lines) {
+        const String trimmed = line.trim();
+        if (trimmed.isEmpty() || trimmed.startsWith(";"))
+            continue;
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            currentSection = trimmed.substring(1, trimmed.length() - 1).trim().toLowerCase();
+            continue;
+        }
+        const int eqPos = trimmed.indexOfChar('=');
+        if (eqPos < 0)
+            continue;
+        const String key   = trimmed.substring(0, eqPos).trim();
+        const String value = trimmed.substring(eqPos + 1).trim();
+
+        if (currentSection == "soundfont" && key == "path")
+            sf2PathRaw = value;
+        else if (currentSection == "params")
+            paramValues.set(key, value);
+    }
+
+    // Restore parameters (actual values → normalized for setValueNotifyingHost)
+    for (auto* param : getParameters()) {
+        if (auto* p = dynamic_cast<AudioProcessorParameterWithID*>(param)) {
+            if (!paramValues.containsKey(p->paramID))
+                continue;
+            const String valueStr = paramValues[p->paramID];
+            const auto& range = p->getNormalisableRange();
+            if (auto* pi = dynamic_cast<AudioParameterInt*>(p)) {
+                const float actual    = static_cast<float>(valueStr.getIntValue());
+                p->setValueNotifyingHost(range.convertTo0to1(actual));
+            } else if (dynamic_cast<AudioParameterFloat*>(p)) {
+                const float actual = valueStr.getFloatValue();
+                p->setValueNotifyingHost(range.convertTo0to1(actual));
+            }
+        }
+    }
+
+    // Restore soundfont path (resolve relative path from preset file directory)
+    if (sf2PathRaw.isNotEmpty()) {
+        File sf2File = File::isAbsolutePath(sf2PathRaw)
+                           ? File(sf2PathRaw)
+                           : presetFile.getParentDirectory().getChildFile(sf2PathRaw);
+        if (sf2File.existsAsFile()) {
+            Value pathValue = valueTreeState.state
+                                  .getChildWithName("soundFont")
+                                  .getPropertyAsValue("path", nullptr);
+            pathValue.setValue(sf2File.getFullPathName());
+        }
+    }
+}
+
 FluidSynthModel& JuicySFAudioProcessor::getFluidSynthModel() {
     return fluidSynthModel;
 }

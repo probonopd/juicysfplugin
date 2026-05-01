@@ -62,6 +62,13 @@ public:
     void getStateInformation (MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    /** Export all parameters + soundfont path to a human-readable INI-style file.
+     *  The SF2 path is stored relative to the preset file when possible. */
+    void savePreset(const File& presetFile);
+
+    /** Import parameters + soundfont path from a file previously written by savePreset(). */
+    void loadPreset(const File& presetFile);
+
     bool supportsDoublePrecisionProcessing() const override;
 
     FluidSynthModel& getFluidSynthModel();
