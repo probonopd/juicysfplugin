@@ -1,13 +1,3 @@
-/*
-  ==============================================================================
-
-    This file was auto-generated!
-
-    It contains the basic framework code for a JUCE plugin editor.
-
-  ==============================================================================
-*/
-
 #pragma once
 
 #include "../JuceLibraryCode/JuceHeader.h"
@@ -16,6 +6,7 @@
 #include "SurjectiveMidiKeyboardComponent.h"
 #include "FilePicker.h"
 #include "SlidersComponent.h"
+#include "XYPad.h"
 
 using juce::SurjectiveMidiKeyboardComponent;
 
@@ -58,6 +49,7 @@ private:
     TablesComponent tablesComponent;
     FilePicker filePicker;
     SlidersComponent slidersComponent;
+    XYPad xyPad;
 
     bool focusInitialized;
 

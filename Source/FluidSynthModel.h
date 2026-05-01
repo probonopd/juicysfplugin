@@ -22,13 +22,15 @@ public:
      ~FluidSynthModel();
 
     void initialise();
-    
+
+    /** Must be called from prepareToPlay() before the first processBlock(). */
+    void prepareToPlay(int maxBlockSize);
+
     int getChannel();
 
     void setControllerValue(int controller, int value);
 
     void processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiMessages);
-
 
     void setSampleRate(float sampleRate);
     
@@ -79,17 +81,36 @@ private:
 
     // Vector synthesis: selects adjacent SF2 presets on each layer channel
     void selectAllLayerPresets(int bank, int preset);
-    // Called each audio block to advance the LFO and update per-channel CC7 weights
-    void updateVectorWeights(int numSamples);
+
+    /** Compute per-layer PCM gain values for this audio block.
+     *  depth==0 → single-layer compat (gains[0]=1, rest 0).
+     *  depth>0  → XY bilinear equal-power mix, swept by LFO. */
+    void computeLayerGains(int numSamples, float* gains);
+
+    /** Push the current tune parameter value into FluidSynth for the given layer. */
+    void applyLayerTune(int layer);
 
     int sfont_id;
     unsigned int channel;
 
     // Vector synthesis state
-    static constexpr int numVectorLayers = 4;
+    static constexpr int numVectorLayers    = 4;
+    static constexpr int numScratchChannels = numVectorLayers * 2; // stereo per layer
+
     float vectorLfoPhase{0.0f};
-    AudioParameterFloat* vectorLfoRateParam{nullptr};
+    AudioParameterFloat* vectorLfoRateParam {nullptr};
     AudioParameterInt*   vectorLfoDepthParam{nullptr};
+    AudioParameterFloat* vectorXParam       {nullptr};
+    AudioParameterFloat* vectorYParam       {nullptr};
+
+    // Per-layer parameters (index: 0=A, 1=B, 2=C, 3=D)
+    AudioParameterFloat* layerLevelParam[numVectorLayers]{};
+    AudioParameterFloat* layerPanParam  [numVectorLayers]{};
+    AudioParameterFloat* layerTuneParam [numVectorLayers]{};
+
+    // Scratch buffer: numScratchChannels mono channels, each length = maxBlockSize.
+    // fluid_synth_process writes one stereo pair per audio group into these buffers.
+    juce::AudioBuffer<float> scratchBuffer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FluidSynthModel)
 };

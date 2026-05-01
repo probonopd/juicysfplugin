@@ -58,9 +58,24 @@ AudioProcessorValueTreeState::ParameterLayout JuicySFAudioProcessor::createParam
     params.push_back(make_unique<AudioParameterInt>("release", "volume envelope release time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "R"));
     params.push_back(make_unique<AudioParameterInt>("filterCutOff", "low-pass filter cut-off frequency", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Cut"));
     params.push_back(make_unique<AudioParameterInt>("filterResonance", "low-pass filter resonance attentuation", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Res"));
-    // Vector synthesis parameters: LFO rate (Hz) and depth (0=off/classic mode)
-    params.push_back(make_unique<AudioParameterFloat>("vectorLfoRate", "vector LFO rate (Hz)", NormalisableRange<float>(0.0f, 10.0f, 0.01f), 0.5f, "Rate (Hz)"));
+    // Vector synthesis LFO
+    params.push_back(make_unique<AudioParameterFloat>("vectorLfoRate", "vector LFO rate (Hz)", NormalisableRange<float>(0.01f, 10.0f, 0.01f, 0.3f), 0.2f, "Rate (Hz)"));
     params.push_back(make_unique<AudioParameterInt>("vectorLfoDepth", "vector LFO depth (0 = classic single-layer mode)", 0, 127, 0, "Depth"));
+    // Vector XY position (bilinear blend of 4 layers)
+    params.push_back(make_unique<AudioParameterFloat>("vectorX", "Vector X", 0.0f, 1.0f, 0.5f));
+    params.push_back(make_unique<AudioParameterFloat>("vectorY", "Vector Y", 0.0f, 1.0f, 0.5f));
+    // Per-layer controls: Level (dB), Pan (-1..+1), Tune (cents fine-tune)
+    static const char* layerNames[] = {"A", "B", "C", "D"};
+    static const float tuneDefs[]   = {0.0f, 7.0f, 0.0f, -5.0f};
+    for (int i = 0; i < 4; ++i) {
+        String pfx = String("layer") + layerNames[i];
+        params.push_back(make_unique<AudioParameterFloat>(pfx + "Level", pfx + " Level (dB)",
+            NormalisableRange<float>(-60.0f, 6.0f, 0.1f, 2.0f), 0.0f));
+        params.push_back(make_unique<AudioParameterFloat>(pfx + "Pan", pfx + " Pan",
+            -1.0f, 1.0f, 0.0f));
+        params.push_back(make_unique<AudioParameterFloat>(pfx + "Tune", pfx + " Tune (cents)",
+            -50.0f, 50.0f, tuneDefs[i]));
+    }
 
     return {
         make_move_iterator(params.begin()),
@@ -131,13 +146,14 @@ void JuicySFAudioProcessor::changeProgramName (int index, const String& newName)
 }
 
 //==============================================================================
-void JuicySFAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlock*/)
+void JuicySFAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
     synth.setCurrentPlaybackSampleRate (sampleRate);
     keyboardState.reset();
     fluidSynthModel.setSampleRate(static_cast<float>(sampleRate));
+    fluidSynthModel.prepareToPlay(samplesPerBlock);
 
     reset();
 }
