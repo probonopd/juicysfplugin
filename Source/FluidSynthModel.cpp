@@ -397,9 +397,13 @@ void FluidSynthModel::updateVectorWeights(int numSamples) {
 
     // Equal-power cosine distribution across numVectorLayers channels.
     // weight[i] = max(0, cos(phase - i * 2π/N))²
-    // When N=4, adjacent pairs of layers always sum to 1 (sin²+cos²=1).
+    // For N=4 channels at 90° intervals, at any given phase exactly two adjacent
+    // layers have a positive cosine. Their squared values satisfy cos²(θ)+sin²(θ)=1,
+    // so the combined weight of active layers is always 1.0.  The baseGain term
+    // spreads depth-scaled equal energy across all layers, maintaining a unit sum:
+    //   sum(weight[i]) = N * baseGain + d * sum(lfoW[i]) = (1-d) + d*1 = 1.0
     const float d        = depth / 127.0f;
-    const float baseGain = (1.0f - d) / numVectorLayers; // equal mix contribution at low depth
+    const float baseGain = (1.0f - d) / numVectorLayers; // equal-blend contribution
     const float twoPi    = juce::MathConstants<float>::twoPi;
 
     for (int i = 0; i < numVectorLayers; ++i) {
@@ -448,7 +452,9 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
                 synth.get(),
                 channel,
                 m.getNoteNumber());
-            // Always send note-off to all layers so no voices are left hanging
+            // Always send note-off to all layers regardless of vectorActive, so
+            // that any voices started when vector mode was enabled are properly
+            // released and never left hanging if the user lowers depth mid-note.
             for (int li = 1; li < numVectorLayers; ++li) {
                 fluid_synth_noteoff(
                     synth.get(),
