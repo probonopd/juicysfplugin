@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <iterator>
+#include <cmath>
 #include <fluidsynth.h>
 #include "FluidSynthModel.h"
 #include "MidiConstants.h"
@@ -175,6 +176,15 @@ void FluidSynthModel::initialise() {
     // clamps the range to between 0 and 1000, so we'll copy that
     fluid_mod_set_amount(mod.get(), 1000.0f);
     fluid_synth_add_default_mod(synth.get(), mod.get(), FLUID_SYNTH_ADD);
+
+    // Silence vector layers 1-3 initially; they are activated when vectorLfoDepth > 0
+    for (int i = 1; i < numVectorLayers; ++i) {
+        fluid_synth_cc(synth.get(), i, 7, 0); // CC7 = Main Volume = 0
+    }
+
+    // Cache vector parameter pointers for lock-free access on the audio thread
+    vectorLfoRateParam  = dynamic_cast<AudioParameterFloat*>(valueTreeState.getParameter("vectorLfoRate"));
+    vectorLfoDepthParam = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("vectorLfoDepth"));
 }
 
 const StringArray FluidSynthModel::programChangeParams{"bank", "preset"};
@@ -200,8 +210,9 @@ void FluidSynthModel::parameterChanged(const String& parameterID, float newValue
             sfont_id,
             static_cast<unsigned int>(bankOffset + bank),
             static_cast<unsigned int>(preset));
+        // Also select adjacent presets on the other vector layer channels
+        selectAllLayerPresets(bank, preset);
     } else if (
-        // https://stackoverflow.com/a/55482091/5257399
         auto it{paramToController.find(parameterID)};
         it != end(paramToController)) {
         RangedAudioParameter *param{valueTreeState.getParameter(parameterID)};
@@ -282,6 +293,15 @@ void FluidSynthModel::loadFont(const String &absPath) {
     }
     // refresh regardless of success, if only to clear the table
     refreshBanks();
+    // After loading a soundfont, seed all vector layer channels with their presets
+    if (sfont_id != -1) {
+        int bank = 0, preset = 0;
+        if (auto* p = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("bank")))
+            bank = p->get();
+        if (auto* p = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("preset")))
+            preset = p->get();
+        selectAllLayerPresets(bank, preset);
+    }
 }
 
 void FluidSynthModel::refreshBanks() {
@@ -338,10 +358,71 @@ void FluidSynthModel::setSampleRate(float sampleRate) {
     fluid_synth_set_sample_rate(synth.get(), sampleRate);
 }
 
+void FluidSynthModel::selectAllLayerPresets(int bank, int preset) {
+    if (sfont_id == -1) return;
+    int bankOffset{fluid_synth_get_bank_offset(synth.get(), sfont_id)};
+    // Layer 0 already set by the caller; set layers 1-3 with adjacent presets
+    for (int i = 1; i < numVectorLayers; ++i) {
+        int layerPreset = (preset + i) % 128;
+        fluid_synth_program_select(
+            synth.get(),
+            i,
+            sfont_id,
+            static_cast<unsigned int>(bankOffset + bank),
+            static_cast<unsigned int>(layerPreset));
+    }
+}
+
+void FluidSynthModel::updateVectorWeights(int numSamples) {
+    if (!vectorLfoRateParam || !vectorLfoDepthParam) return;
+
+    const float rate  = vectorLfoRateParam->get();
+    const int   depth = vectorLfoDepthParam->get();
+
+    if (depth == 0) {
+        // Classic single-layer mode: full volume on channel 0, silence on 1-3
+        fluid_synth_cc(synth.get(), 0, 7, 127);
+        for (int i = 1; i < numVectorLayers; ++i)
+            fluid_synth_cc(synth.get(), i, 7, 0);
+        return;
+    }
+
+    // Advance the LFO phase by the number of samples in this block
+    if (rate > 0.0f && currentSampleRate > 0.0f) {
+        const float twoPi = juce::MathConstants<float>::twoPi;
+        vectorLfoPhase += twoPi * rate * static_cast<float>(numSamples) / currentSampleRate;
+        while (vectorLfoPhase >= twoPi)
+            vectorLfoPhase -= twoPi;
+    }
+
+    // Equal-power cosine distribution across numVectorLayers channels.
+    // weight[i] = max(0, cos(phase - i * 2π/N))²
+    // When N=4, adjacent pairs of layers always sum to 1 (sin²+cos²=1).
+    const float d        = depth / 127.0f;
+    const float baseGain = (1.0f - d) / numVectorLayers; // equal mix contribution at low depth
+    const float twoPi    = juce::MathConstants<float>::twoPi;
+
+    for (int i = 0; i < numVectorLayers; ++i) {
+        const float angle = vectorLfoPhase - i * twoPi / numVectorLayers;
+        const float c     = std::cos(angle);
+        const float lfoW  = c > 0.0f ? c * c : 0.0f; // max(0, cos)²
+        const float weight = baseGain + d * lfoW;
+        const int cc7 = juce::jlimit(0, 127, static_cast<int>(std::round(weight * 127.0f)));
+        fluid_synth_cc(synth.get(), i, 7, cc7);
+    }
+}
+
 void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiMessages) {
     MidiBuffer processedMidi;
     int time;
     MidiMessage m;
+
+    // Update vector LFO weights before processing MIDI so the new CC7 values
+    // are applied to voices triggered in this block.
+    updateVectorWeights(buffer.getNumSamples());
+
+    // Determine whether vector mode is active (depth > 0)
+    const bool vectorActive = vectorLfoDepthParam && (vectorLfoDepthParam->get() > 0);
 
     for (MidiBuffer::Iterator i{midiMessages}; i.getNextEvent(m, time);) {
         DEBUG_PRINT(m.getDescription());
@@ -352,11 +433,28 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
                 channel,
                 m.getNoteNumber(),
                 m.getVelocity());
+            // In vector mode, trigger the same note on all additional layer channels
+            if (vectorActive) {
+                for (int li = 1; li < numVectorLayers; ++li) {
+                    fluid_synth_noteon(
+                        synth.get(),
+                        li,
+                        m.getNoteNumber(),
+                        m.getVelocity());
+                }
+            }
         } else if (m.isNoteOff()) {
             fluid_synth_noteoff(
                 synth.get(),
                 channel,
                 m.getNoteNumber());
+            // Always send note-off to all layers so no voices are left hanging
+            for (int li = 1; li < numVectorLayers; ++li) {
+                fluid_synth_noteoff(
+                    synth.get(),
+                    li,
+                    m.getNoteNumber());
+            }
         } else if (m.isController()) {
             fluid_synth_cc(
                 synth.get(),

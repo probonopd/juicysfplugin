@@ -76,9 +76,20 @@ private:
 
     void unloadAndLoadFont(const String &absPath);
     void loadFont(const String &absPath);
-    
+
+    // Vector synthesis: selects adjacent SF2 presets on each layer channel
+    void selectAllLayerPresets(int bank, int preset);
+    // Called each audio block to advance the LFO and update per-channel CC7 weights
+    void updateVectorWeights(int numSamples);
+
     int sfont_id;
     unsigned int channel;
+
+    // Vector synthesis state
+    static constexpr int numVectorLayers = 4;
+    float vectorLfoPhase{0.0f};
+    AudioParameterFloat* vectorLfoRateParam{nullptr};
+    AudioParameterInt*   vectorLfoDepthParam{nullptr};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FluidSynthModel)
 };

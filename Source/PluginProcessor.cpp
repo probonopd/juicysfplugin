@@ -47,22 +47,24 @@ JuicySFAudioProcessor::JuicySFAudioProcessor()
 
 AudioProcessorValueTreeState::ParameterLayout JuicySFAudioProcessor::createParameterLayout() {
     // https://stackoverflow.com/a/8469002/5257399
-    unique_ptr<AudioParameterInt> params[] {
-        // SoundFont 2.4 spec section 7.2: zero through 127, or 128.
-        make_unique<AudioParameterInt>("bank", "which bank is selected in the soundfont", MidiConstants::midiMinValue, 128, MidiConstants::midiMinValue, "Bank" ),
-        // note: banks may be sparse, and lack a 0th preset. so defend against this.
-        make_unique<AudioParameterInt>("preset", "which patch (aka patch, program, instrument) is selected in the soundfont", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Preset" ),
-        make_unique<AudioParameterInt>("attack", "volume envelope attack time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "A" ),
-        make_unique<AudioParameterInt>("decay", "volume envelope sustain attentuation", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "D" ),
-        make_unique<AudioParameterInt>("sustain", "volume envelope decay time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "S" ),
-        make_unique<AudioParameterInt>("release", "volume envelope release time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "R" ),
-        make_unique<AudioParameterInt>("filterCutOff", "low-pass filter cut-off frequency", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Cut" ),
-        make_unique<AudioParameterInt>("filterResonance", "low-pass filter resonance attentuation", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Res" ),
-    };
-    
+    vector<unique_ptr<RangedAudioParameter>> params;
+    // SoundFont 2.4 spec section 7.2: zero through 127, or 128.
+    params.push_back(make_unique<AudioParameterInt>("bank", "which bank is selected in the soundfont", MidiConstants::midiMinValue, 128, MidiConstants::midiMinValue, "Bank"));
+    // note: banks may be sparse, and lack a 0th preset. so defend against this.
+    params.push_back(make_unique<AudioParameterInt>("preset", "which patch (aka patch, program, instrument) is selected in the soundfont", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Preset"));
+    params.push_back(make_unique<AudioParameterInt>("attack", "volume envelope attack time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "A"));
+    params.push_back(make_unique<AudioParameterInt>("decay", "volume envelope sustain attentuation", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "D"));
+    params.push_back(make_unique<AudioParameterInt>("sustain", "volume envelope decay time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "S"));
+    params.push_back(make_unique<AudioParameterInt>("release", "volume envelope release time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "R"));
+    params.push_back(make_unique<AudioParameterInt>("filterCutOff", "low-pass filter cut-off frequency", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Cut"));
+    params.push_back(make_unique<AudioParameterInt>("filterResonance", "low-pass filter resonance attentuation", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Res"));
+    // Vector synthesis parameters: LFO rate (Hz) and depth (0=off/classic mode)
+    params.push_back(make_unique<AudioParameterFloat>("vectorLfoRate", "vector LFO rate (Hz)", NormalisableRange<float>(0.0f, 10.0f, 0.01f), 0.5f, "Rate (Hz)"));
+    params.push_back(make_unique<AudioParameterInt>("vectorLfoDepth", "vector LFO depth (0 = classic single-layer mode)", 0, 127, 0, "Depth"));
+
     return {
-        make_move_iterator(begin(params)),
-        make_move_iterator(end(params))
+        make_move_iterator(params.begin()),
+        make_move_iterator(params.end())
     };
 }
 

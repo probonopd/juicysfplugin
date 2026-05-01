@@ -34,18 +34,21 @@ SlidersComponent::~SlidersComponent()
 const int SlidersComponent::getDesiredWidth() {
     const int envelopeSliders{4};
     const int filterSliders{2};
+    const int vectorSliders{2};
     const int groupXMargin{8};
     const int groupXPadding{8};
     const int sliderXMargin{3};
     const int sliderWidth{30};
 
     return envelopeSliders * sliderWidth + (envelopeSliders-1) * sliderXMargin + 2 * groupXPadding
-    + filterSliders * sliderWidth + (filterSliders-1) * sliderXMargin + 2 * groupXPadding + groupXMargin;
+    + filterSliders * sliderWidth + (filterSliders-1) * sliderXMargin + 2 * groupXPadding + groupXMargin
+    + vectorSliders * sliderWidth + (vectorSliders-1) * sliderXMargin + 2 * groupXPadding + groupXMargin;
 }
 
 void SlidersComponent::resized() {
     const int envelopeSliders{4};
     const int filterSliders{2};
+    const int vectorSliders{2};
     const int groupXMargin{8};
     const int groupXPadding{8};
     const int groupYPadding{9};
@@ -55,17 +58,22 @@ void SlidersComponent::resized() {
     Rectangle<int> r{getLocalBounds()};
     Rectangle<int> rEnvelope{r.removeFromLeft(envelopeSliders * sliderWidth + (envelopeSliders-1) * sliderXMargin + 2 * groupXPadding)};
     Rectangle<int> rFilter{r.removeFromLeft(filterSliders * sliderWidth + (filterSliders-1) * sliderXMargin + 2 * groupXPadding + groupXMargin).withTrimmedLeft(groupXMargin)};
+    Rectangle<int> rVector{r.removeFromLeft(vectorSliders * sliderWidth + (vectorSliders-1) * sliderXMargin + 2 * groupXPadding + groupXMargin).withTrimmedLeft(groupXMargin)};
     envelopeGroup.setBounds(rEnvelope);
     filterGroup.setBounds(rFilter);
+    vectorGroup.setBounds(rVector);
 
     rEnvelope.reduce(groupXPadding, groupYPadding);
     rFilter.reduce(groupXPadding, groupYPadding);
+    rVector.reduce(groupXPadding, groupYPadding);
     attackSlider.setBounds(rEnvelope.removeFromLeft(sliderWidth).withTrimmedTop(labelHeight));
     decaySlider.setBounds(rEnvelope.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
     sustainSlider.setBounds(rEnvelope.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
     releaseSlider.setBounds(rEnvelope.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
     filterCutOffSlider.setBounds(rFilter.removeFromLeft(sliderWidth).withTrimmedTop(labelHeight));
     filterResonanceSlider.setBounds(rFilter.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
+    vectorLfoRateSlider.setBounds(rVector.removeFromLeft(sliderWidth).withTrimmedTop(labelHeight));
+    vectorLfoDepthSlider.setBounds(rVector.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
 }
 
 void SlidersComponent::acceptMidiControlEvent(int controller, int value) {
@@ -100,6 +108,7 @@ SlidersComponent::SlidersComponent(
 , fluidSynthModel{fluidSynthModel}
 , envelopeGroup{"envelopeGroup", "Envelope"}
 , filterGroup{"filterGroup", "Filter"}
+, vectorGroup{"vectorGroup", "Vector"}
 {
     const Slider::SliderStyle style{Slider::SliderStyle::LinearVertical};
     const double rangeMin(0);
@@ -173,13 +182,38 @@ SlidersComponent::SlidersComponent(
     filterResonanceLabel.setJustificationType(Justification::centredBottom);
     filterResonanceLabel.attachToComponent(&filterResonanceSlider, false);
 
+    // Vector synthesis sliders
+    vectorLfoRateSlider.setSliderStyle(style);
+    vectorLfoRateSlider.setRange(0.0, 10.0, 0.01);
+    vectorLfoRateSlider.setTextBoxStyle(Slider::TextBoxBelow, true, vectorLfoRateSlider.getTextBoxWidth(), vectorLfoRateSlider.getTextBoxHeight());
+    vectorLfoRateAttachment = make_unique<SliderAttachment>(valueTreeState, "vectorLfoRate", vectorLfoRateSlider);
+
+    vectorLfoDepthSlider.setSliderStyle(style);
+    vectorLfoDepthSlider.setRange(rangeMin, rangeMax, rangeStep);
+    vectorLfoDepthSlider.setTextBoxStyle(Slider::TextBoxBelow, true, vectorLfoDepthSlider.getTextBoxWidth(), vectorLfoDepthSlider.getTextBoxHeight());
+    vectorLfoDepthAttachment = make_unique<SliderAttachment>(valueTreeState, "vectorLfoDepth", vectorLfoDepthSlider);
+
+    vectorLfoRateLabel.setText("Rate", NotificationType::dontSendNotification);
+    vectorLfoRateLabel.setJustificationType(Justification::centredBottom);
+    vectorLfoRateLabel.attachToComponent(&vectorLfoRateSlider, false);
+
+    vectorLfoDepthLabel.setText("Depth", NotificationType::dontSendNotification);
+    vectorLfoDepthLabel.setJustificationType(Justification::centredBottom);
+    vectorLfoDepthLabel.attachToComponent(&vectorLfoDepthSlider, false);
+
     addAndMakeVisible(attackLabel);
     addAndMakeVisible(decayLabel);
     addAndMakeVisible(sustainLabel);
     addAndMakeVisible(releaseLabel);
     addAndMakeVisible(filterCutOffLabel);
     addAndMakeVisible(filterResonanceLabel);
+    addAndMakeVisible(vectorLfoRateLabel);
+    addAndMakeVisible(vectorLfoDepthLabel);
+
+    addAndMakeVisible(vectorLfoRateSlider);
+    addAndMakeVisible(vectorLfoDepthSlider);
 
     addAndMakeVisible(envelopeGroup);
     addAndMakeVisible(filterGroup);
+    addAndMakeVisible(vectorGroup);
 }
