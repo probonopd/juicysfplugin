@@ -34,7 +34,7 @@ SlidersComponent::~SlidersComponent()
 const int SlidersComponent::getDesiredWidth() {
     const int envelopeSliders{4};
     const int filterSliders{2};
-    const int vectorSliders{2};
+    const int vectorSliders{3};
     const int groupXMargin{8};
     const int groupXPadding{8};
     const int sliderXMargin{3};
@@ -48,7 +48,7 @@ const int SlidersComponent::getDesiredWidth() {
 void SlidersComponent::resized() {
     const int envelopeSliders{4};
     const int filterSliders{2};
-    const int vectorSliders{2};
+    const int vectorSliders{3};
     const int groupXMargin{8};
     const int groupXPadding{8};
     const int groupYPadding{9};
@@ -74,6 +74,7 @@ void SlidersComponent::resized() {
     filterResonanceSlider.setBounds(rFilter.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
     vectorLfoRateSlider.setBounds(rVector.removeFromLeft(sliderWidth).withTrimmedTop(labelHeight));
     vectorLfoDepthSlider.setBounds(rVector.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
+    waveSeqCrossfadeSlider.setBounds(rVector.removeFromLeft(sliderWidth + sliderXMargin).withTrimmedTop(labelHeight).withTrimmedLeft(sliderXMargin));
 }
 
 void SlidersComponent::acceptMidiControlEvent(int controller, int value) {
@@ -182,7 +183,7 @@ SlidersComponent::SlidersComponent(
     filterResonanceLabel.setJustificationType(Justification::centredBottom);
     filterResonanceLabel.attachToComponent(&filterResonanceSlider, false);
 
-    // Vector synthesis sliders
+    // Vector synthesis / wave-sequence sliders
     vectorLfoRateSlider.setSliderStyle(style);
     vectorLfoRateSlider.setRange(0.0, 10.0, 0.01);
     vectorLfoRateSlider.setTextBoxStyle(Slider::TextBoxBelow, true, vectorLfoRateSlider.getTextBoxWidth(), vectorLfoRateSlider.getTextBoxHeight());
@@ -193,6 +194,11 @@ SlidersComponent::SlidersComponent(
     vectorLfoDepthSlider.setTextBoxStyle(Slider::TextBoxBelow, true, vectorLfoDepthSlider.getTextBoxWidth(), vectorLfoDepthSlider.getTextBoxHeight());
     vectorLfoDepthAttachment = make_unique<SliderAttachment>(valueTreeState, "vectorLfoDepth", vectorLfoDepthSlider);
 
+    waveSeqCrossfadeSlider.setSliderStyle(style);
+    waveSeqCrossfadeSlider.setRange(0.0, 0.9, 0.01);
+    waveSeqCrossfadeSlider.setTextBoxStyle(Slider::TextBoxBelow, true, waveSeqCrossfadeSlider.getTextBoxWidth(), waveSeqCrossfadeSlider.getTextBoxHeight());
+    waveSeqCrossfadeAttachment = make_unique<SliderAttachment>(valueTreeState, "waveSeqCrossfade", waveSeqCrossfadeSlider);
+
     vectorLfoRateLabel.setText("Rate", NotificationType::dontSendNotification);
     vectorLfoRateLabel.setJustificationType(Justification::centredBottom);
     vectorLfoRateLabel.attachToComponent(&vectorLfoRateSlider, false);
@@ -200,6 +206,10 @@ SlidersComponent::SlidersComponent(
     vectorLfoDepthLabel.setText("Depth", NotificationType::dontSendNotification);
     vectorLfoDepthLabel.setJustificationType(Justification::centredBottom);
     vectorLfoDepthLabel.attachToComponent(&vectorLfoDepthSlider, false);
+
+    waveSeqCrossfadeLabel.setText("Xfade", NotificationType::dontSendNotification);
+    waveSeqCrossfadeLabel.setJustificationType(Justification::centredBottom);
+    waveSeqCrossfadeLabel.attachToComponent(&waveSeqCrossfadeSlider, false);
 
     addAndMakeVisible(attackLabel);
     addAndMakeVisible(decayLabel);
@@ -209,9 +219,11 @@ SlidersComponent::SlidersComponent(
     addAndMakeVisible(filterResonanceLabel);
     addAndMakeVisible(vectorLfoRateLabel);
     addAndMakeVisible(vectorLfoDepthLabel);
+    addAndMakeVisible(waveSeqCrossfadeLabel);
 
     addAndMakeVisible(vectorLfoRateSlider);
     addAndMakeVisible(vectorLfoDepthSlider);
+    addAndMakeVisible(waveSeqCrossfadeSlider);
 
     addAndMakeVisible(envelopeGroup);
     addAndMakeVisible(filterGroup);

@@ -58,9 +58,11 @@ AudioProcessorValueTreeState::ParameterLayout JuicySFAudioProcessor::createParam
     params.push_back(make_unique<AudioParameterInt>("release", "volume envelope release time", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "R"));
     params.push_back(make_unique<AudioParameterInt>("filterCutOff", "low-pass filter cut-off frequency", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Cut"));
     params.push_back(make_unique<AudioParameterInt>("filterResonance", "low-pass filter resonance attentuation", MidiConstants::midiMinValue, MidiConstants::midiMaxValue, MidiConstants::midiMinValue, "Res"));
-    // Vector synthesis LFO
-    params.push_back(make_unique<AudioParameterFloat>("vectorLfoRate", "vector LFO rate (Hz)", NormalisableRange<float>(0.01f, 10.0f, 0.01f, 0.3f), 0.2f, "Rate (Hz)"));
-    params.push_back(make_unique<AudioParameterInt>("vectorLfoDepth", "vector LFO depth (0 = classic single-layer mode)", 0, 127, 0, "Depth"));
+    // Vector synthesis LFO / wave-sequence controls
+    params.push_back(make_unique<AudioParameterFloat>("vectorLfoRate", "vector LFO / wave-seq rate (steps/sec)", NormalisableRange<float>(0.01f, 10.0f, 0.01f, 0.3f), 0.2f, "Rate"));
+    params.push_back(make_unique<AudioParameterInt>("vectorLfoDepth", "vector LFO depth / wave-seq enable (0 = classic single-layer mode)", 0, 127, 0, "Depth"));
+    // Wave-sequence crossfade fraction (0 = hard snap, 0.9 = very slow crossfade)
+    params.push_back(make_unique<AudioParameterFloat>("waveSeqCrossfade", "wave sequence crossfade fraction", 0.0f, 0.9f, 0.3f, "Xfade"));
     // Vector XY position (bilinear blend of 4 layers)
     params.push_back(make_unique<AudioParameterFloat>("vectorX", "Vector X", 0.0f, 1.0f, 0.5f));
     params.push_back(make_unique<AudioParameterFloat>("vectorY", "Vector Y", 0.0f, 1.0f, 0.5f));

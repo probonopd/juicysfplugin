@@ -79,29 +79,89 @@ private:
     void unloadAndLoadFont(const String &absPath);
     void loadFont(const String &absPath);
 
-    // Vector synthesis: selects adjacent SF2 presets on each layer channel
-    void selectAllLayerPresets(int bank, int preset);
+    // -----------------------------------------------------------------------
+    // Wave-sequence / vector synthesis constants
+    // -----------------------------------------------------------------------
+    // 4 logical layers, each backed by 2 physical MIDI channels (A/B) so that
+    // PCM-level crossfade between consecutive wave-sequence steps is possible
+    // without volume artefacts.
+    static constexpr int numVectorLayers    = 4;   // logical layers (XY blend)
+    static constexpr int numPhysChannels    = 8;   // 2 per layer: chanA + chanB
+    static constexpr int numAudioGroups     = numPhysChannels;
+    static constexpr int numScratchChannels = numAudioGroups * 2; // stereo per group
+    static constexpr int numSeqSteps        = numVectorLayers;    // wave-seq length
+
+    // -----------------------------------------------------------------------
+    // Per-layer wave sequence state
+    // -----------------------------------------------------------------------
+    struct LayerSeqState {
+        // Continuous position through the wave sequence (wraps at numSeqSteps).
+        // Each layer starts offset from the previous by 1 step so they are always
+        // at different timbres.
+        float phase     {0.0f};
+
+        // Which of the two physical MIDI channels is currently the "hot" (A) side?
+        //   activeHalf==false  →  chanA = layer,              chanB = layer + numVectorLayers
+        //   activeHalf==true   →  chanA = layer + numVectorLayers, chanB = layer
+        bool  activeHalf{false};
+
+        // PCM crossfade progress within the current wave-seq step.
+        // 0 = chanA fully dominant, 1 = chanB fully dominant.
+        float xfAlpha   {0.0f};
+    };
+
+    LayerSeqState layerStates[numVectorLayers];
+
+    // -----------------------------------------------------------------------
+    // Held-note tracking (used to re-trigger notes on the B channel at each
+    // wave-sequence step transition).
+    // -----------------------------------------------------------------------
+    struct HeldNote { int note; int velocity; };
+    std::vector<HeldNote> heldNotes;
+
+    // -----------------------------------------------------------------------
+    // Helper: physical MIDI channel indices for a logical layer
+    // -----------------------------------------------------------------------
+    int getChanA (int layer) const noexcept {
+        return layerStates[layer].activeHalf
+               ? layer + numVectorLayers
+               : layer;
+    }
+    int getChanB (int layer) const noexcept {
+        return layerStates[layer].activeHalf
+               ? layer
+               : layer + numVectorLayers;
+    }
+
+    // -----------------------------------------------------------------------
+    // Wave-sequence state machine (called each processBlock)
+    // -----------------------------------------------------------------------
+    void advanceWaveSeq (int numSamples, int bank, int preset);
+
+    // -----------------------------------------------------------------------
+    // Vector synthesis: selects SF2 presets on all physical channels based on
+    // the current wave-sequence step for each layer.
+    // -----------------------------------------------------------------------
+    void selectAllLayerPresets (int bank, int preset);
 
     /** Compute per-layer PCM gain values for this audio block.
      *  depth==0 → single-layer compat (gains[0]=1, rest 0).
-     *  depth>0  → XY bilinear equal-power mix, swept by LFO. */
-    void computeLayerGains(int numSamples, float* gains);
+     *  depth>0  → XY bilinear equal-power mix, optionally swept by LFO. */
+    void computeLayerGains (int numSamples, float* gains);
 
-    /** Push the current tune parameter value into FluidSynth for the given layer. */
-    void applyLayerTune(int layer);
+    /** Push the current tune parameter value into FluidSynth for the given layer
+     *  (applies to both chanA and chanB physical channels). */
+    void applyLayerTune (int layer);
 
     int sfont_id;
     unsigned int channel;
 
-    // Vector synthesis state
-    static constexpr int numVectorLayers    = 4;
-    static constexpr int numScratchChannels = numVectorLayers * 2; // stereo per layer
-
     float vectorLfoPhase{0.0f};
-    AudioParameterFloat* vectorLfoRateParam {nullptr};
-    AudioParameterInt*   vectorLfoDepthParam{nullptr};
-    AudioParameterFloat* vectorXParam       {nullptr};
-    AudioParameterFloat* vectorYParam       {nullptr};
+    AudioParameterFloat* vectorLfoRateParam  {nullptr};
+    AudioParameterInt*   vectorLfoDepthParam {nullptr};
+    AudioParameterFloat* vectorXParam        {nullptr};
+    AudioParameterFloat* vectorYParam        {nullptr};
+    AudioParameterFloat* waveSeqCrossfadeParam{nullptr};
 
     // Per-layer parameters (index: 0=A, 1=B, 2=C, 3=D)
     AudioParameterFloat* layerLevelParam[numVectorLayers]{};
