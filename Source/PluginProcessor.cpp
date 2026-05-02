@@ -62,7 +62,7 @@ AudioProcessorValueTreeState::ParameterLayout JuicySFAudioProcessor::createParam
     params.push_back(make_unique<AudioParameterFloat>("vectorLfoRate", "vector LFO / wave-seq rate (steps/sec)", NormalisableRange<float>(0.01f, 10.0f, 0.01f, 0.3f), 0.2f, "Rate"));
     params.push_back(make_unique<AudioParameterInt>("vectorLfoDepth", "vector LFO depth / wave-seq enable (0 = classic single-layer mode)", 0, 127, 0, "Depth"));
     // Wave-sequence crossfade fraction (0 = hard snap, 0.9 = very slow crossfade)
-    params.push_back(make_unique<AudioParameterFloat>("waveSeqCrossfade", "wave sequence crossfade fraction", 0.0f, 0.9f, 0.3f, "Xfade"));
+    params.push_back(make_unique<AudioParameterFloat>("waveSeqCrossfade", "wave sequence crossfade fraction", 0.0f, 0.9f, 0.3f));
     // Vector XY position (bilinear blend of 4 layers)
     params.push_back(make_unique<AudioParameterFloat>("vectorX", "Vector X", 0.0f, 1.0f, 0.5f));
     params.push_back(make_unique<AudioParameterFloat>("vectorY", "Vector Y", 0.0f, 1.0f, 0.5f));
