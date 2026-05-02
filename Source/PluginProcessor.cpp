@@ -41,6 +41,8 @@ JuicySFAudioProcessor::JuicySFAudioProcessor()
     }, {} }, nullptr);
     // no properties, no subtrees (yet)
     valueTreeState.state.appendChild({ "banks", {}, {} }, nullptr);
+    // Which wave-seq step (0-3) the preset browser is currently targeting
+    valueTreeState.state.setProperty("activeBrowserStep", 0, nullptr);
     
     initialiseSynth();
 }
@@ -77,6 +79,17 @@ AudioProcessorValueTreeState::ParameterLayout JuicySFAudioProcessor::createParam
             -1.0f, 1.0f, 0.0f));
         params.push_back(make_unique<AudioParameterFloat>(pfx + "Tune", pfx + " Tune (cents)",
             -50.0f, 50.0f, tuneDefs[i]));
+    }
+    // Wave-sequence per-step preset selectors (arbitrary SF2 bank/preset per step)
+    for (int i = 0; i < 4; ++i) {
+        params.push_back(make_unique<AudioParameterInt>(
+            String("step") + layerNames[i] + "Bank",
+            String("Wave-seq step ") + layerNames[i] + " bank",
+            MidiConstants::midiMinValue, 128, MidiConstants::midiMinValue));
+        params.push_back(make_unique<AudioParameterInt>(
+            String("step") + layerNames[i] + "Preset",
+            String("Wave-seq step ") + layerNames[i] + " preset",
+            MidiConstants::midiMinValue, MidiConstants::midiMaxValue, i));
     }
 
     return {

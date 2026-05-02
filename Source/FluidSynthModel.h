@@ -82,67 +82,59 @@ private:
     // -----------------------------------------------------------------------
     // Wave-sequence / vector synthesis constants
     // -----------------------------------------------------------------------
-    // 4 logical layers, each backed by 2 physical MIDI channels (A/B) so that
-    // PCM-level crossfade between consecutive wave-sequence steps is possible
-    // without volume artefacts.
-    static constexpr int numVectorLayers    = 4;   // logical layers (XY blend)
-    static constexpr int numPhysChannels    = 8;   // 2 per layer: chanA + chanB
-    static constexpr int numAudioGroups     = numPhysChannels;
+    // 4 voice slots, each backed by 2 physical MIDI channels (A/B) so that
+    // PCM-level crossfade between consecutive wave-sequence steps is possible.
+    // Channel layout: voice V uses channels V (chanA) and V+MAX_VOICES (chanB).
+    static constexpr int MAX_VOICES      = 4;
+    static constexpr int numPhysChannels = MAX_VOICES * 2; // 8 total
+    static constexpr int numAudioGroups  = numPhysChannels;
     static constexpr int numScratchChannels = numAudioGroups * 2; // stereo per group
-    static constexpr int numSeqSteps        = numVectorLayers;    // wave-seq length
+    static constexpr int numSeqSteps     = 4;  // wave-sequence steps A/B/C/D
 
     // -----------------------------------------------------------------------
-    // Per-layer wave sequence state
+    // Per-voice wave sequence state (one entry per voice slot)
     // -----------------------------------------------------------------------
-    struct LayerSeqState {
+    struct VoiceState {
+        bool  active     {false}; // note is currently held
+        int   noteNumber {0};
+        int   velocity   {0};
+
         // Continuous position through the wave sequence (wraps at numSeqSteps).
-        // Each layer starts offset from the previous by 1 step so they are always
-        // at different timbres.
-        float phase     {0.0f};
+        // Independent per voice — starts at 0 when the note is triggered.
+        float phase      {0.0f};
 
         // Which of the two physical MIDI channels is currently the "hot" (A) side?
-        //   activeHalf==false  →  chanA = layer,              chanB = layer + numVectorLayers
-        //   activeHalf==true   →  chanA = layer + numVectorLayers, chanB = layer
-        bool  activeHalf{false};
+        //   activeHalf==false  → chanA = voiceSlot,             chanB = voiceSlot + MAX_VOICES
+        //   activeHalf==true   → chanA = voiceSlot + MAX_VOICES, chanB = voiceSlot
+        bool  activeHalf {false};
 
         // PCM crossfade progress within the current wave-seq step.
         // 0 = chanA fully dominant, 1 = chanB fully dominant.
-        float xfAlpha   {0.0f};
+        float xfAlpha    {0.0f};
     };
 
-    LayerSeqState layerStates[numVectorLayers];
+    VoiceState voices[MAX_VOICES];
 
     // -----------------------------------------------------------------------
-    // Held-note tracking (used to re-trigger notes on the B channel at each
-    // wave-sequence step transition).
+    // Helper: physical MIDI channel indices for a voice slot
     // -----------------------------------------------------------------------
-    struct HeldNote { int note; int velocity; };
-    std::vector<HeldNote> heldNotes;
-
-    // -----------------------------------------------------------------------
-    // Helper: physical MIDI channel indices for a logical layer
-    // -----------------------------------------------------------------------
-    int getChanA (int layer) const noexcept {
-        return layerStates[layer].activeHalf
-               ? layer + numVectorLayers
-               : layer;
+    int getChanA (int vs) const noexcept {
+        return voices[vs].activeHalf ? vs + MAX_VOICES : vs;
     }
-    int getChanB (int layer) const noexcept {
-        return layerStates[layer].activeHalf
-               ? layer
-               : layer + numVectorLayers;
+    int getChanB (int vs) const noexcept {
+        return voices[vs].activeHalf ? vs : vs + MAX_VOICES;
     }
 
     // -----------------------------------------------------------------------
     // Wave-sequence state machine (called each processBlock)
     // -----------------------------------------------------------------------
-    void advanceWaveSeq (int numSamples, int bank, int preset);
+    void advanceWaveSeq (int numSamples);
 
     // -----------------------------------------------------------------------
-    // Vector synthesis: selects SF2 presets on all physical channels based on
-    // the current wave-sequence step for each layer.
+    // Load step presets onto all physical channels (called after font load /
+    // step preset parameter change).
     // -----------------------------------------------------------------------
-    void selectAllLayerPresets (int bank, int preset);
+    void loadStepPresetsOnChannels();
 
     /** Compute per-layer PCM gain values for this audio block.
      *  depth==0 → single-layer compat (gains[0]=1, rest 0).
@@ -163,10 +155,14 @@ private:
     AudioParameterFloat* vectorYParam        {nullptr};
     AudioParameterFloat* waveSeqCrossfadeParam{nullptr};
 
-    // Per-layer parameters (index: 0=A, 1=B, 2=C, 3=D)
-    AudioParameterFloat* layerLevelParam[numVectorLayers]{};
-    AudioParameterFloat* layerPanParam  [numVectorLayers]{};
-    AudioParameterFloat* layerTuneParam [numVectorLayers]{};
+    // Per-layer parameters (index: 0=A, 1=B, 2=C, 3=D) — still used in legacy mode
+    AudioParameterFloat* layerLevelParam[MAX_VOICES]{};
+    AudioParameterFloat* layerPanParam  [MAX_VOICES]{};
+    AudioParameterFloat* layerTuneParam [MAX_VOICES]{};
+
+    // Per-step wave-sequence preset selectors
+    AudioParameterInt* stepBankParam  [numSeqSteps]{};
+    AudioParameterInt* stepPresetParam[numSeqSteps]{};
 
     // Scratch buffer: numScratchChannels mono channels, each length = maxBlockSize.
     // fluid_synth_process writes one stereo pair per audio group into these buffers.

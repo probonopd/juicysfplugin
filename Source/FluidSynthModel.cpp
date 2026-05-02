@@ -58,7 +58,7 @@ FluidSynthModel::FluidSynthModel(
     }
     // Listen for per-layer tune changes so we can push them to FluidSynth
     static const char* lNames[] = {"A", "B", "C", "D"};
-    for (int li = 0; li < numVectorLayers; ++li) {
+    for (int li = 0; li < MAX_VOICES; ++li) {
         valueTreeState.addParameterListener(String("layer") + lNames[li] + "Tune", this);
     }
     valueTreeState.state.addListener(this);
@@ -69,7 +69,7 @@ FluidSynthModel::~FluidSynthModel() {
         valueTreeState.removeParameterListener(param, this);
     }
     static const char* lNames[] = {"A", "B", "C", "D"};
-    for (int li = 0; li < numVectorLayers; ++li) {
+    for (int li = 0; li < MAX_VOICES; ++li) {
         valueTreeState.removeParameterListener(String("layer") + lNames[li] + "Tune", this);
     }
     valueTreeState.removeParameterListener("bank", this);
@@ -203,24 +203,23 @@ void FluidSynthModel::initialise() {
     waveSeqCrossfadeParam= dynamic_cast<AudioParameterFloat*>(valueTreeState.getParameter("waveSeqCrossfade"));
 
     static const char* lNames[] = {"A", "B", "C", "D"};
-    for (int li = 0; li < numVectorLayers; ++li) {
+    for (int li = 0; li < MAX_VOICES; ++li) {
         String pfx = String("layer") + lNames[li];
         layerLevelParam[li] = dynamic_cast<AudioParameterFloat*>(valueTreeState.getParameter(pfx + "Level"));
         layerPanParam[li]   = dynamic_cast<AudioParameterFloat*>(valueTreeState.getParameter(pfx + "Pan"));
         layerTuneParam[li]  = dynamic_cast<AudioParameterFloat*>(valueTreeState.getParameter(pfx + "Tune"));
+        // Per-step wave-sequence preset selectors
+        stepBankParam[li]   = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter(String("step") + lNames[li] + "Bank"));
+        stepPresetParam[li] = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter(String("step") + lNames[li] + "Preset"));
     }
 
-    // Initialise wave-sequence layer states: each layer is offset by 1 step so
-    // all four presets are always active simultaneously with different blend weights.
-    for (int li = 0; li < numVectorLayers; ++li) {
-        layerStates[li].phase      = static_cast<float>(li); // 0, 1, 2, 3
-        layerStates[li].activeHalf = false;
-        layerStates[li].xfAlpha    = 0.0f;
+    // Initialise voice slots: all inactive, phase=0
+    for (int vs = 0; vs < MAX_VOICES; ++vs) {
+        voices[vs] = VoiceState{};
     }
-    heldNotes.reserve(32);
 
     // Push initial per-layer fine-tuning into FluidSynth
-    for (int li = 0; li < numVectorLayers; ++li)
+    for (int li = 0; li < MAX_VOICES; ++li)
         applyLayerTune(li);
 
     // Pre-allocate scratch buffer so processBlock never allocates on the audio thread
@@ -243,9 +242,17 @@ void FluidSynthModel::parameterChanged(const String& parameterID, float newValue
             AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
             preset = castParam->get();
         }
-        // selectAllLayerPresets handles ALL physical channels (0-7) based on the
-        // current wave-sequence step for each layer, including channel 0.
-        selectAllLayerPresets(bank, preset);
+        const bool waveSeqActive = vectorLfoDepthParam && (vectorLfoDepthParam->get() > 0);
+        if (!waveSeqActive) {
+            // Legacy single-layer mode: apply bank/preset to channel 0
+            if (sfont_id != -1) {
+                const int bankOffset = fluid_synth_get_bank_offset(synth.get(), sfont_id);
+                fluid_synth_program_select(synth.get(), 0, sfont_id,
+                    static_cast<unsigned int>(bankOffset + bank),
+                    static_cast<unsigned int>(preset));
+            }
+        }
+        // In wave-seq mode, bank/preset are for browsing only — step params control sound.
     } else if (
         auto it{paramToController.find(parameterID)};
         it != end(paramToController)) {
@@ -262,7 +269,7 @@ void FluidSynthModel::parameterChanged(const String& parameterID, float newValue
     } else {
         // Check for per-layer tune parameter changes
         static const char* lNames[] = {"A", "B", "C", "D"};
-        for (int li = 0; li < numVectorLayers; ++li) {
+        for (int li = 0; li < MAX_VOICES; ++li) {
             if (parameterID == String("layer") + lNames[li] + "Tune") {
                 applyLayerTune(li);
                 break;
@@ -334,14 +341,9 @@ void FluidSynthModel::loadFont(const String &absPath) {
     }
     // refresh regardless of success, if only to clear the table
     refreshBanks();
-    // After loading a soundfont, seed all vector layer channels with their presets
+    // After loading a soundfont, seed all voice channels with the step presets
     if (sfont_id != -1) {
-        int bank = 0, preset = 0;
-        if (auto* p = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("bank")))
-            bank = p->get();
-        if (auto* p = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("preset")))
-            preset = p->get();
-        selectAllLayerPresets(bank, preset);
+        loadStepPresetsOnChannels();
     }
 }
 
@@ -399,33 +401,34 @@ void FluidSynthModel::setSampleRate(float sampleRate) {
     fluid_synth_set_sample_rate(synth.get(), sampleRate);
 }
 
-void FluidSynthModel::selectAllLayerPresets(int bank, int preset) {
+void FluidSynthModel::loadStepPresetsOnChannels() {
+    // Pre-load step presets onto the physical channels so the first note-on is instant.
+    // Voice slot V: chanA = V (step 0), chanB = V + MAX_VOICES (step 1 / next step).
+    // All voices start at phase=0 / step 0, with step 1 pre-loaded on chanB.
     if (sfont_id == -1) return;
-    int bankOffset{fluid_synth_get_bank_offset(synth.get(), sfont_id)};
-    // For each logical layer, set the preset for BOTH its A and B physical channels
-    // based on the current wave-sequence step stored in layerStates.
-    for (int li = 0; li < numVectorLayers; ++li) {
-        const int stepA = static_cast<int>(std::floor(layerStates[li].phase)) % numSeqSteps;
-        const int stepB = (stepA + 1) % numSeqSteps;
-        const int presetA = (preset + stepA) % 128;
-        const int presetB = (preset + stepB) % 128;
-        const int chanA   = getChanA(li);
-        const int chanB   = getChanB(li);
+    const int bankOffset = fluid_synth_get_bank_offset(synth.get(), sfont_id);
+    const int bank0   = stepBankParam[0]   ? stepBankParam[0]->get()   : 0;
+    const int preset0 = stepPresetParam[0] ? stepPresetParam[0]->get() : 0;
+    const int bank1   = stepBankParam[1]   ? stepBankParam[1]->get()   : 0;
+    const int preset1 = stepPresetParam[1] ? stepPresetParam[1]->get() : 1;
+    for (int vs = 0; vs < MAX_VOICES; ++vs) {
+        const int chanA = vs;              // when !activeHalf
+        const int chanB = vs + MAX_VOICES; // when !activeHalf
         fluid_synth_program_select(synth.get(), chanA, sfont_id,
-            static_cast<unsigned int>(bankOffset + bank),
-            static_cast<unsigned int>(presetA));
+            static_cast<unsigned int>(bankOffset + bank0),
+            static_cast<unsigned int>(preset0));
         fluid_synth_program_select(synth.get(), chanB, sfont_id,
-            static_cast<unsigned int>(bankOffset + bank),
-            static_cast<unsigned int>(presetB));
+            static_cast<unsigned int>(bankOffset + bank1),
+            static_cast<unsigned int>(preset1));
     }
 }
 
 void FluidSynthModel::applyLayerTune(int layer) {
-    if (!synth || layer < 0 || layer >= numVectorLayers) return;
+    if (!synth || layer < 0 || layer >= MAX_VOICES) return;
     const float cents = layerTuneParam[layer] ? layerTuneParam[layer]->get() : 0.0f;
     // Apply to both physical channels of this logical layer
-    fluid_synth_set_gen(synth.get(), layer,                  GEN_FINETUNE, cents);
-    fluid_synth_set_gen(synth.get(), layer + numVectorLayers, GEN_FINETUNE, cents);
+    fluid_synth_set_gen(synth.get(), layer,             GEN_FINETUNE, cents);
+    fluid_synth_set_gen(synth.get(), layer + MAX_VOICES, GEN_FINETUNE, cents);
 }
 
 void FluidSynthModel::prepareToPlay(int maxBlockSize) {
@@ -440,7 +443,7 @@ void FluidSynthModel::computeLayerGains(int numSamples, float* gains) {
     if (depth == 0) {
         // Single-layer compatibility: only layer 0 is active
         gains[0] = 1.0f;
-        for (int i = 1; i < numVectorLayers; ++i) gains[i] = 0.0f;
+        for (int i = 1; i < MAX_VOICES; ++i) gains[i] = 0.0f;
         return;
     }
 
@@ -478,15 +481,15 @@ void FluidSynthModel::computeLayerGains(int numSamples, float* gains) {
 // ---------------------------------------------------------------------------
 // Wave-sequence state machine
 // ---------------------------------------------------------------------------
-// Called once per processBlock AFTER MIDI events have been processed into
-// heldNotes.  Advances the continuous phase for each logical layer and, when
-// a step boundary is crossed, performs the step transition:
+// Called once per processBlock AFTER MIDI events have been processed.
+// Advances the continuous phase for each ACTIVE voice slot and, when a step
+// boundary is crossed, performs the per-voice step transition:
 //   1. Send note-off to old chanA (now at gain≈0 in the PCM mix)
 //   2. Swap activeHalf → old chanB becomes new chanA
 //   3. Select the next-next preset on new chanB (old chanA)
-//   4. Re-trigger all held notes on new chanB so it is ready to fade in
+//   4. Re-trigger the note on new chanB so it is ready to fade in
 // ---------------------------------------------------------------------------
-void FluidSynthModel::advanceWaveSeq(int numSamples, int bank, int preset) {
+void FluidSynthModel::advanceWaveSeq(int numSamples) {
     if (sfont_id == -1) return;
 
     const float rate  = vectorLfoRateParam    ? vectorLfoRateParam->get()    : 0.2f;
@@ -499,55 +502,54 @@ void FluidSynthModel::advanceWaveSeq(int numSamples, int bank, int preset) {
 
     const int bankOffset = fluid_synth_get_bank_offset(synth.get(), sfont_id);
 
-    for (int li = 0; li < numVectorLayers; ++li) {
-        auto& st = layerStates[li];
+    for (int vs = 0; vs < MAX_VOICES; ++vs) {
+        auto& v = voices[vs];
+        if (!v.active) continue;
 
-        const float prevPhase = st.phase;
-        st.phase += dt;
+        const float prevPhase = v.phase;
+        v.phase += dt;
 
         // Did we cross a step boundary?
         const bool stepAdvanced =
-            (static_cast<int>(std::floor(st.phase)) >
+            (static_cast<int>(std::floor(v.phase)) >
              static_cast<int>(std::floor(prevPhase)));
 
         if (stepAdvanced) {
             // Step transition ------------------------------------------------
-            const int oldChanA = getChanA(li); // will become new chanB
+            const int oldChanA = getChanA(vs); // will become new chanB
 
             // 1. Send note-off to old chanA (currently at xfAlpha≈1, so gain≈0)
-            for (const auto& hn : heldNotes)
-                fluid_synth_noteoff(synth.get(), oldChanA, hn.note);
+            fluid_synth_noteoff(synth.get(), oldChanA, v.noteNumber);
 
             // 2. Swap: old chanB becomes new chanA, old chanA becomes new chanB
-            st.activeHalf = !st.activeHalf;
+            v.activeHalf = !v.activeHalf;
 
-            // 3. Determine the NEXT-NEXT step (2 ahead of where we just landed)
-            const int curStep      = static_cast<int>(std::floor(st.phase)) % numSeqSteps;
+            // 3. Determine the NEXT-NEXT step and load it on new chanB
+            const int curStep      = static_cast<int>(std::floor(v.phase)) % numSeqSteps;
             const int nextNextStep = (curStep + 1) % numSeqSteps;
-            const int nnPreset     = (preset + nextNextStep) % 128;
+            const int newChanB     = getChanB(vs);
+            if (stepBankParam[nextNextStep] && stepPresetParam[nextNextStep]) {
+                fluid_synth_program_select(
+                    synth.get(), newChanB, sfont_id,
+                    static_cast<unsigned int>(bankOffset + stepBankParam[nextNextStep]->get()),
+                    static_cast<unsigned int>(stepPresetParam[nextNextStep]->get()));
+            }
 
-            const int newChanB = getChanB(li); // = old chanA after the swap
-            fluid_synth_program_select(
-                synth.get(), newChanB, sfont_id,
-                static_cast<unsigned int>(bankOffset + bank),
-                static_cast<unsigned int>(nnPreset));
-
-            // 4. Pre-trigger all held notes on new chanB so it is in sustain
-            //    by the time the next crossfade starts (≥ (1-cfrac) of a step later)
-            for (const auto& hn : heldNotes)
-                fluid_synth_noteon(synth.get(), newChanB, hn.note, hn.velocity);
+            // 4. Pre-trigger the note on new chanB so it is in sustain
+            //    by the time the next crossfade starts.
+            fluid_synth_noteon(synth.get(), newChanB, v.noteNumber, v.velocity);
 
             // Reset crossfade to HOLD state
-            st.xfAlpha = 0.0f;
+            v.xfAlpha = 0.0f;
         }
 
         // Recompute xfAlpha from the current fractional step position
-        const float stepFrac = st.phase - std::floor(st.phase);
+        const float stepFrac = v.phase - std::floor(v.phase);
         if (cfrac > 0.0f && stepFrac > (1.0f - cfrac)) {
-            st.xfAlpha = juce::jlimit(0.0f, 1.0f,
+            v.xfAlpha = juce::jlimit(0.0f, 1.0f,
                              (stepFrac - (1.0f - cfrac)) / cfrac);
         } else {
-            st.xfAlpha = 0.0f;
+            v.xfAlpha = 0.0f;
         }
     }
 }
@@ -556,10 +558,6 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
     const int numSamples = buffer.getNumSamples();
     int time;
     MidiMessage m;
-
-    // Compute per-layer XY bilinear gains for this block (also advances LFO phase)
-    float gains[numVectorLayers];
-    computeLayerGains(numSamples, gains);
 
     // Is the wave-sequence / vector mode active?
     const bool waveSeqActive = vectorLfoDepthParam && (vectorLfoDepthParam->get() > 0);
@@ -572,31 +570,65 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
             const int note = m.getNoteNumber();
             const int vel  = m.getVelocity();
 
-            // Track the held note so advanceWaveSeq can re-trigger it at step transitions
-            heldNotes.push_back({note, vel});
-
             if (waveSeqActive) {
-                // Trigger on ALL physical channels (chanA + chanB for every layer).
-                // chanB voices are at gain=0 in the PCM mix until a crossfade begins,
-                // but pre-loading them now means they are already in sustain phase
-                // when their crossfade eventually starts — giving smooth timbre blends.
-                for (int phys = 0; phys < numPhysChannels; ++phys)
-                    fluid_synth_noteon(synth.get(), phys, note, vel);
+                // Allocate a voice slot (steal oldest if all are busy).
+                int vs = -1;
+                for (int v = 0; v < MAX_VOICES; ++v) {
+                    if (!voices[v].active) { vs = v; break; }
+                }
+                if (vs < 0) {
+                    // Voice steal: steal voice 0 (simplest strategy)
+                    vs = 0;
+                    fluid_synth_noteoff(synth.get(), getChanA(0), voices[0].noteNumber);
+                    fluid_synth_noteoff(synth.get(), getChanB(0), voices[0].noteNumber);
+                }
+
+                auto& v = voices[vs];
+                v.active     = true;
+                v.noteNumber = note;
+                v.velocity   = vel;
+                v.phase      = 0.0f;  // Each new note starts the sequence from step 0
+                v.activeHalf = false;
+                v.xfAlpha    = 0.0f;
+
+                // Load step 0 on chanA and step 1 on chanB
+                if (sfont_id != -1) {
+                    const int bankOffset = fluid_synth_get_bank_offset(synth.get(), sfont_id);
+                    const int chanA = getChanA(vs);
+                    const int chanB = getChanB(vs);
+                    if (stepBankParam[0] && stepPresetParam[0])
+                        fluid_synth_program_select(synth.get(), chanA, sfont_id,
+                            static_cast<unsigned int>(bankOffset + stepBankParam[0]->get()),
+                            static_cast<unsigned int>(stepPresetParam[0]->get()));
+                    if (stepBankParam[1] && stepPresetParam[1])
+                        fluid_synth_program_select(synth.get(), chanB, sfont_id,
+                            static_cast<unsigned int>(bankOffset + stepBankParam[1]->get()),
+                            static_cast<unsigned int>(stepPresetParam[1]->get()));
+                    // Trigger note on chanA (immediately audible) and chanB (silent until crossfade)
+                    fluid_synth_noteon(synth.get(), chanA, note, vel);
+                    fluid_synth_noteon(synth.get(), chanB, note, vel);
+                }
             } else {
-                // Single-layer compat: only logical channel 0
+                // Legacy single-layer mode: channel 0 only
                 fluid_synth_noteon(synth.get(), 0, note, vel);
             }
 
         } else if (m.isNoteOff()) {
             const int note = m.getNoteNumber();
-            heldNotes.erase(
-                std::remove_if(heldNotes.begin(), heldNotes.end(),
-                               [note](const HeldNote& h) { return h.note == note; }),
-                heldNotes.end());
-            // Always send note-off to every physical channel to prevent stuck voices
-            // if the user toggles wave-seq mode while holding notes.
-            for (int phys = 0; phys < numPhysChannels; ++phys)
-                fluid_synth_noteoff(synth.get(), phys, note);
+            if (waveSeqActive) {
+                // Release the voice(s) playing this note
+                for (int vs = 0; vs < MAX_VOICES; ++vs) {
+                    if (voices[vs].active && voices[vs].noteNumber == note) {
+                        voices[vs].active = false;
+                        fluid_synth_noteoff(synth.get(), getChanA(vs), note);
+                        fluid_synth_noteoff(synth.get(), getChanB(vs), note);
+                    }
+                }
+            } else {
+                // Legacy: send to channel 0 and all channels (prevent stuck notes)
+                for (int phys = 0; phys < numPhysChannels; ++phys)
+                    fluid_synth_noteoff(synth.get(), phys, note);
+            }
 
         } else if (m.isController()) {
             // Incoming MIDI CC → forward to all physical channels
@@ -649,12 +681,7 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
 
     // --- Advance wave-sequence state machine --------------------------------
     if (waveSeqActive) {
-        int bank = 0, preset = 0;
-        if (auto* p = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("bank")))
-            bank = p->get();
-        if (auto* p = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("preset")))
-            preset = p->get();
-        advanceWaveSeq(numSamples, bank, preset);
+        advanceWaveSeq(numSamples);
     }
 
     // --- PCM-level mixing ---------------------------------------------------
@@ -674,59 +701,42 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
 
     fluid_synth_process(synth.get(), numSamples, 0, nullptr, numScratchChannels, outPtrs);
 
-    // --- Mix 4 logical layers (each with A + B channel) into output ---------
+    // --- Mix voice slots into output buffer ---------------------------------
     buffer.clear();
     const int numOutChannels = buffer.getNumChannels();
 
-    for (int li = 0; li < numVectorLayers; ++li) {
-        const float layerGain = gains[li];
-        const float xfAlpha   = waveSeqActive ? layerStates[li].xfAlpha : 0.0f;
-
-        const float gA = layerGain * (1.0f - xfAlpha);
-        const float gB = layerGain * xfAlpha;
-
-        if (gA < 1e-6f && gB < 1e-6f) continue;
-
-        // Per-layer level (dB) and constant-power pan
-        float levelGain = 1.0f;
-        if (layerLevelParam[li])
-            levelGain = juce::Decibels::decibelsToGain(layerLevelParam[li]->get());
-
-        float panL = 1.0f, panR = 1.0f;
-        if (layerPanParam[li]) {
-            const float pan = layerPanParam[li]->get(); // -1.0 .. +1.0
-            panL = std::sqrt(0.5f * (1.0f - pan));
-            panR = std::sqrt(0.5f * (1.0f + pan));
-        }
-
-        // Identify the physical channels for this layer
-        const int chanA_phys = getChanA(li);
-        const int chanB_phys = getChanB(li);
-
-        // Helper lambda: accumulate one physical channel into the output buffer
-        auto mixChannel = [&](int physCh, float gain) {
-            if (gain < 1e-6f) return;
-            const float totalL = gain * levelGain * panL;
-            const float totalR = gain * levelGain * panR;
-            const float* srcL  = scratchBuffer.getReadPointer(physCh * 2);
-            const float* srcR  = scratchBuffer.getReadPointer(physCh * 2 + 1);
-            if (numOutChannels >= 2) {
-                float* dstL = buffer.getWritePointer(0);
-                float* dstR = buffer.getWritePointer(1);
-                for (int s = 0; s < numSamples; ++s) {
-                    dstL[s] += srcL[s] * totalL;
-                    dstR[s] += srcR[s] * totalR;
-                }
-            } else {
-                float* dst = buffer.getWritePointer(0);
-                const float monoPan = (panL + panR) * 0.5f;
-                for (int s = 0; s < numSamples; ++s)
-                    dst[s] += (srcL[s] + srcR[s]) * 0.5f * gain * levelGain * monoPan;
+    // Helper lambda: accumulate one physical channel into the output buffer
+    auto mixChannel = [&](int physCh, float gain) {
+        if (gain < 1e-6f) return;
+        const float* srcL = scratchBuffer.getReadPointer(physCh * 2);
+        const float* srcR = scratchBuffer.getReadPointer(physCh * 2 + 1);
+        if (numOutChannels >= 2) {
+            float* dstL = buffer.getWritePointer(0);
+            float* dstR = buffer.getWritePointer(1);
+            for (int s = 0; s < numSamples; ++s) {
+                dstL[s] += srcL[s] * gain;
+                dstR[s] += srcR[s] * gain;
             }
-        };
+        } else {
+            float* dst = buffer.getWritePointer(0);
+            for (int s = 0; s < numSamples; ++s)
+                dst[s] += (srcL[s] + srcR[s]) * 0.5f * gain;
+        }
+    };
 
-        mixChannel(chanA_phys, gA);
-        mixChannel(chanB_phys, gB);
+    if (waveSeqActive) {
+        // Wave-seq mode: mix all 4 voice slots (each has chanA and chanB)
+        // Voices in their release phase are !active but still produce audio —
+        // mix them with their last xfAlpha so the release is heard.
+        for (int vs = 0; vs < MAX_VOICES; ++vs) {
+            const float gA = 1.0f - voices[vs].xfAlpha;
+            const float gB = voices[vs].xfAlpha;
+            mixChannel(getChanA(vs), gA);
+            mixChannel(getChanB(vs), gB);
+        }
+    } else {
+        // Legacy single-layer mode: channel 0 only
+        mixChannel(0, 1.0f);
     }
 }
 
