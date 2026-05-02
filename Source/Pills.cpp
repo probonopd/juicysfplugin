@@ -48,31 +48,14 @@ void Pill::bankChanged(int bank) {
 }
 
 void Pill::buttonClicked(Button* button) {
-    ValueTree banks{valueTreeState.state.getChildWithName("banks")};
-    int banksChildren{banks.getNumChildren()};
-    ValueTree bank;
-    for(int bankIx{0}; bankIx<banksChildren; bankIx++) {
-        ValueTree currentBank{banks.getChild(bankIx)};
-        int bankNum{currentBank.getProperty("num")};
-        if (bankNum == this->bank) {
-            bank = currentBank;
-            break;
-        }
-    }
-    ValueTree preset{bank.getChild(0)};
-    int presetNum{preset.getProperty("num")};
-
+    // Clicking a bank pill only navigates the bank browser.
+    // It does NOT change any wave-sequence step preset — the user must
+    // explicitly click a preset row in the table to assign it to the active step.
     {
         RangedAudioParameter *param{valueTreeState.getParameter("bank")};
         jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
         AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
         *castParam = this->bank;
-    }
-    {
-        RangedAudioParameter *param{valueTreeState.getParameter("preset")};
-        jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
-        AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
-        *castParam = presetNum;
     }
 }
 

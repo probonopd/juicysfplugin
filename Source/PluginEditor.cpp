@@ -23,6 +23,7 @@ JuicySFAudioProcessorEditor::JuicySFAudioProcessorEditor(
 , tablesComponent{valueTreeState}
 , filePicker{valueTreeState}
 , slidersComponent{valueTreeState, p.getFluidSynthModel()}
+, xyPad{valueTreeState, "vectorX", "vectorY"}
 {
     // set resize limits for this plug-in
     setResizeLimits(
@@ -51,6 +52,7 @@ JuicySFAudioProcessorEditor::JuicySFAudioProcessorEditor(
     addAndMakeVisible(slidersComponent);
     addAndMakeVisible(tablesComponent);
     addAndMakeVisible(filePicker);
+    addAndMakeVisible(xyPad);
 
 }
 
@@ -86,6 +88,7 @@ void JuicySFAudioProcessorEditor::resized()
     const int padding{8};
     const int pianoHeight{70};
     const int filePickerHeight{25};
+    const int xyPadSize{160};
     Rectangle<int> r{getLocalBounds()};
     filePicker.setBounds(r.removeFromTop(filePickerHeight + padding).reduced(padding, 0).withTrimmedTop(padding));
 
@@ -93,6 +96,10 @@ void JuicySFAudioProcessorEditor::resized()
 
     Rectangle<int> rContent{r.reduced(0, padding)};
     slidersComponent.setBounds(rContent.removeFromRight(slidersComponent.getDesiredWidth() + padding).withTrimmedRight(padding));
+
+    // XY pad sits between the sliders and the patch browser
+    const int xyWidth = juce::jmin(xyPadSize, rContent.getWidth() / 2);
+    xyPad.setBounds(rContent.removeFromRight(xyWidth + padding).withTrimmedRight(padding).withSizeKeepingCentre(xyWidth, juce::jmin(xyWidth, rContent.getHeight())));
 
     tablesComponent.setBounds(rContent);
 

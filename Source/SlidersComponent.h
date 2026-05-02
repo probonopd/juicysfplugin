@@ -54,5 +54,19 @@ private:
     Label filterResonanceLabel;
     unique_ptr<SliderAttachment> filterResonanceSliderAttachment;
 
+    GroupComponent vectorGroup;
+
+    Slider vectorLfoRateSlider;
+    Label vectorLfoRateLabel;
+    unique_ptr<SliderAttachment> vectorLfoRateAttachment;
+
+    Slider vectorLfoDepthSlider;
+    Label vectorLfoDepthLabel;
+    unique_ptr<SliderAttachment> vectorLfoDepthAttachment;
+
+    Slider waveSeqCrossfadeSlider;
+    Label waveSeqCrossfadeLabel;
+    unique_ptr<SliderAttachment> waveSeqCrossfadeAttachment;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SlidersComponent)
 };

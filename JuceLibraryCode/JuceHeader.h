@@ -37,7 +37,9 @@
 
 using juce::AudioBuffer;
 using juce::AudioChannelSet;
+using juce::AudioParameterFloat;
 using juce::AudioParameterInt;
+using juce::NormalisableRange;
 using juce::AudioProcessor;
 using juce::AudioProcessorEditor;
 using juce::AudioProcessorParameterWithID;

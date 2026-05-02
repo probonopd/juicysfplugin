@@ -61,12 +61,17 @@ TableComponent::TableComponent(
     table.getHeader().setSortColumnId(1, false); // sort ascending by ID column
     valueTreeState.state.addListener(this);
     valueTreeState.addParameterListener("bank", this);
-    valueTreeState.addParameterListener("preset", this);
+    // Listen to all wave-seq step preset params so we can update the highlighted row
+    static const char* steps[] = {"A", "B", "C", "D"};
+    for (int i = 0; i < 4; ++i)
+        valueTreeState.addParameterListener(String("step") + steps[i] + "Preset", this);
 }
 
 TableComponent::~TableComponent() {
     valueTreeState.removeParameterListener("bank", this);
-    valueTreeState.removeParameterListener("preset", this);
+    static const char* steps[] = {"A", "B", "C", "D"};
+    for (int i = 0; i < 4; ++i)
+        valueTreeState.removeParameterListener(String("step") + steps[i] + "Preset", this);
     valueTreeState.state.removeListener(this);
 }
 
@@ -91,8 +96,15 @@ void TableComponent::loadModelFrom(ValueTree& banks) {
 void TableComponent::parameterChanged(const String& parameterID, float newValue) {
     if (parameterID == "bank") {
         repopulateTable();
-    } else if (parameterID == "preset") {
-        selectCurrentPreset();
+    } else {
+        // If one of the step preset params changed, refresh the highlighted row
+        static const char* steps[] = {"A", "B", "C", "D"};
+        for (int i = 0; i < 4; ++i) {
+            if (parameterID == String("step") + steps[i] + "Preset") {
+                selectCurrentPreset();
+                return;
+            }
+        }
     }
 }
 
@@ -129,6 +141,24 @@ void TableComponent::valueTreePropertyChanged(
     if (treeWhosePropertyHasChanged.getType() == StringRef("banks")) {
         if (property == StringRef("synthetic")) {
             loadModelFrom(treeWhosePropertyHasChanged);
+        }
+    } else if (property == StringRef("activeBrowserStep")) {
+        // User switched which wave-seq step is being edited.
+        // Navigate the browser to the bank containing that step's assigned preset.
+        const int activeStep = static_cast<int>(
+            treeWhosePropertyHasChanged.getProperty("activeBrowserStep", 0));
+        static const char* steps[] = {"A", "B", "C", "D"};
+        auto* stepBankP  = dynamic_cast<AudioParameterInt*>(
+            valueTreeState.getParameter(String("step") + steps[activeStep] + "Bank"));
+        auto* browserBankP = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("bank"));
+        if (stepBankP && browserBankP) {
+            const int stepBank = stepBankP->get();
+            if (browserBankP->get() != stepBank)
+                *browserBankP = stepBank;  // triggers repopulateTable → selectCurrentPreset
+            else
+                selectCurrentPreset();
+        } else {
+            selectCurrentPreset();
         }
     }
 }
@@ -202,10 +232,14 @@ void TableComponent::sortOrderChanged (
 
 void TableComponent::selectCurrentPreset() {
     table.deselectAllRows();
-    RangedAudioParameter *param{valueTreeState.getParameter("preset")};
-    jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
-    AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
-    int value{castParam->get()};
+    // Highlight the row for the currently active wave-seq step's preset
+    const int activeStep = static_cast<int>(
+        valueTreeState.state.getProperty("activeBrowserStep", 0));
+    static const char* steps[] = {"A", "B", "C", "D"};
+    auto* param = dynamic_cast<AudioParameterInt*>(
+        valueTreeState.getParameter(String("step") + steps[activeStep] + "Preset"));
+    if (!param) return;
+    int value{param->get()};
 
     for (auto it{rows.begin()}; it != rows.end(); ++it) {
         if(it->preset == value) {
@@ -276,11 +310,23 @@ void TableComponent::selectedRowsChanged (int row) {
     if (row < 0) {
         return;
     }
-    int newPreset{rows[row].preset};
-    RangedAudioParameter *param{valueTreeState.getParameter("preset")};
-    jassert(dynamic_cast<AudioParameterInt*>(param) != nullptr);
-    AudioParameterInt* castParam{dynamic_cast<AudioParameterInt*>(param)};
-    *castParam = newPreset;
+    const int newPreset{rows[row].preset};
+
+    // Write to the active wave-seq step's bank and preset params
+    const int activeStep = static_cast<int>(
+        valueTreeState.state.getProperty("activeBrowserStep", 0));
+    static const char* steps[] = {"A", "B", "C", "D"};
+
+    auto* stepBankP   = dynamic_cast<AudioParameterInt*>(
+        valueTreeState.getParameter(String("step") + steps[activeStep] + "Bank"));
+    auto* stepPresetP = dynamic_cast<AudioParameterInt*>(
+        valueTreeState.getParameter(String("step") + steps[activeStep] + "Preset"));
+    auto* browserBankP = dynamic_cast<AudioParameterInt*>(valueTreeState.getParameter("bank"));
+
+    if (stepBankP && browserBankP)
+        *stepBankP = browserBankP->get();
+    if (stepPresetP)
+        *stepPresetP = newPreset;
 }
 
 bool TableComponent::keyPressed(const KeyPress &key) {
