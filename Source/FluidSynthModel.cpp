@@ -489,7 +489,7 @@ void FluidSynthModel::computeLayerGains(int numSamples, float* gains) {
 void FluidSynthModel::advanceWaveSeq(int numSamples, int bank, int preset) {
     if (sfont_id == -1) return;
 
-    const float rate  = vectorLfoRateParam    ? vectorLfoRateParam->get()    : 0.5f;
+    const float rate  = vectorLfoRateParam    ? vectorLfoRateParam->get()    : 0.2f;
     const float cfrac = waveSeqCrossfadeParam ? waveSeqCrossfadeParam->get() : 0.3f;
 
     // Phase advance per block (in steps/block)
@@ -719,8 +719,9 @@ void FluidSynthModel::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiM
                 }
             } else {
                 float* dst = buffer.getWritePointer(0);
+                const float monoPan = (panL + panR) * 0.5f;
                 for (int s = 0; s < numSamples; ++s)
-                    dst[s] += (srcL[s] + srcR[s]) * 0.5f * gain * levelGain;
+                    dst[s] += (srcL[s] + srcR[s]) * 0.5f * gain * levelGain * monoPan;
             }
         };
 
